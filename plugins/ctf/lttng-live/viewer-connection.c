@@ -101,6 +101,11 @@ static int parse_url(struct bt_live_viewer_connection *viewer_connection)
 	if (path_len >= MAXNAMLEN) {
 		goto end;
 	}
+
+	remain[0][0] = '\0';
+	remain[1][0] = '\0';
+	remain[2][0] = '\0';
+
 	ret = sscanf(path, "net%d://", &proto);
 	if (ret < 1) {
 		proto = 4;
