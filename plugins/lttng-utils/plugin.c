@@ -45,6 +45,17 @@
 #include "copy.h"
 
 static
+gboolean empty_trace_map(gpointer key, gpointer value, gpointer user_data)
+{
+	struct debug_info_trace *di_trace = value;
+
+	di_trace->trace_static = 1;
+	debug_info_close_trace(di_trace->debug_it, di_trace);
+
+	return TRUE;
+}
+
+static
 void destroy_debug_info_data(struct debug_info_component *debug_info)
 {
 	free(debug_info->arg_debug_info_field_name);
@@ -74,33 +85,10 @@ end:
 }
 
 static
-void unref_debug_info(struct debug_info *debug_info)
+void unref_trace(struct debug_info_trace *di_trace)
 {
-	debug_info_destroy(debug_info);
-}
-
-static
-void unref_trace(struct bt_ctf_trace *trace)
-{
-	bt_put(trace);
-}
-
-static
-void unref_stream(struct bt_ctf_stream *stream)
-{
-	bt_put(stream);
-}
-
-static
-void unref_packet(struct bt_ctf_packet *packet)
-{
-	bt_put(packet);
-}
-
-static
-void unref_stream_class(struct bt_ctf_stream_class *stream_class)
-{
-	bt_put(stream_class);
+	bt_put(di_trace->writer_trace);
+	g_free(di_trace);
 }
 
 static
@@ -114,13 +102,14 @@ void debug_info_iterator_destroy(struct bt_private_notification_iterator *it)
 	if (it_data->input_iterator_group) {
 		g_ptr_array_free(it_data->input_iterator_group, TRUE);
 	}
+
+	g_hash_table_foreach_remove(it_data->trace_map,
+			empty_trace_map, it_data);
+	g_hash_table_destroy(it_data->trace_map);
+
 	bt_put(it_data->current_notification);
 	bt_put(it_data->input_iterator);
-	g_hash_table_destroy(it_data->trace_map);
-	g_hash_table_destroy(it_data->stream_map);
-	g_hash_table_destroy(it_data->stream_class_map);
-	g_hash_table_destroy(it_data->packet_map);
-	g_hash_table_destroy(it_data->trace_debug_map);
+
 	g_free(it_data);
 }
 
@@ -148,6 +137,7 @@ struct bt_notification *handle_notification(FILE *err,
 				writer_packet);
 		assert(new_notification);
 		bt_put(packet);
+		bt_put(writer_packet);
 		break;
 	}
 	case BT_NOTIFICATION_TYPE_PACKET_END:
@@ -166,6 +156,7 @@ struct bt_notification *handle_notification(FILE *err,
 				writer_packet);
 		assert(new_notification);
 		bt_put(packet);
+		bt_put(writer_packet);
 		break;
 	}
 	case BT_NOTIFICATION_TYPE_EVENT:
@@ -188,6 +179,25 @@ struct bt_notification *handle_notification(FILE *err,
 		assert(new_notification);
 		bt_put(event);
 		bt_put(writer_event);
+		break;
+	}
+	case BT_NOTIFICATION_TYPE_STREAM_BEGIN:
+	{
+		struct bt_ctf_stream *stream =
+			bt_notification_stream_begin_get_stream(notification);
+		struct bt_ctf_stream *writer_stream;
+
+		if (!stream) {
+			goto end;
+		}
+
+		writer_stream = debug_info_stream_begin(debug_it, stream);
+		assert(writer_stream);
+		new_notification = bt_notification_stream_begin_create(
+				writer_stream);
+		assert(new_notification);
+		bt_put(stream);
+		bt_put(writer_stream);
 		break;
 	}
 	case BT_NOTIFICATION_TYPE_STREAM_END:
@@ -284,6 +294,7 @@ enum bt_notification_iterator_status debug_info_iterator_init(
 	struct bt_private_port *input_port;
 	static const enum bt_notification_type notif_types[] = {
 		BT_NOTIFICATION_TYPE_EVENT,
+		BT_NOTIFICATION_TYPE_STREAM_BEGIN,
 		BT_NOTIFICATION_TYPE_STREAM_END,
 		BT_NOTIFICATION_TYPE_PACKET_BEGIN,
 		BT_NOTIFICATION_TYPE_PACKET_END,
@@ -321,14 +332,6 @@ enum bt_notification_iterator_status debug_info_iterator_init(
 	it_data->err = it_data->debug_info_component->err;
 	it_data->trace_map = g_hash_table_new_full(g_direct_hash,
 			g_direct_equal, NULL, (GDestroyNotify) unref_trace);
-	it_data->stream_map = g_hash_table_new_full(g_direct_hash,
-			g_direct_equal, NULL, (GDestroyNotify) unref_stream);
-	it_data->stream_class_map = g_hash_table_new_full(g_direct_hash,
-			g_direct_equal, NULL, (GDestroyNotify) unref_stream_class);
-	it_data->packet_map = g_hash_table_new_full(g_direct_hash,
-			g_direct_equal, NULL, (GDestroyNotify) unref_packet);
-	it_data->trace_debug_map = g_hash_table_new_full(g_direct_hash,
-			g_direct_equal, NULL, (GDestroyNotify) unref_debug_info);
 
 	it_ret = bt_private_notification_iterator_set_user_data(iterator, it_data);
 	if (it_ret) {

@@ -35,6 +35,18 @@
 #include <babeltrace/ctf-ir/fields.h>
 #include <babeltrace/ctf-ir/event-class.h>
 
+enum debug_info_stream_state {
+	/*
+	 * We know the stream exists but we have never received a
+	 * stream_begin notification for it.
+	 */
+	DEBUG_INFO_UNKNOWN_STREAM,
+	/* We know this stream is active (between stream_begin and _end). */
+	DEBUG_INFO_ACTIVE_STREAM,
+	/* We have received a stream_end for this stream. */
+	DEBUG_INFO_COMPLETED_STREAM,
+};
+
 struct debug_info_component {
 	FILE *err;
 	char *arg_debug_info_field_name;
@@ -47,6 +59,20 @@ struct debug_info_iterator {
 	struct debug_info_component *debug_info_component;
 	/* Map between struct bt_ctf_trace and struct bt_ctf_writer. */
 	GHashTable *trace_map;
+	/* Input iterators associated with this output iterator. */
+	GPtrArray *input_iterator_group;
+	struct bt_notification *current_notification;
+	struct bt_notification_iterator *input_iterator;
+	FILE *err;
+};
+
+struct debug_info_trace {
+	struct bt_ctf_trace *trace;
+	struct bt_ctf_trace *writer_trace;
+	struct debug_info_component *debug_info_component;
+	struct debug_info_iterator *debug_it;
+	int static_listener_id;
+	int trace_static;
 	/* Map between reader and writer stream. */
 	GHashTable *stream_map;
 	/* Map between reader and writer stream class. */
@@ -55,11 +81,8 @@ struct debug_info_iterator {
 	GHashTable *packet_map;
 	/* Map between a trace_class and its corresponding debug_info. */
 	GHashTable *trace_debug_map;
-	/* Input iterators associated with this output iterator. */
-	GPtrArray *input_iterator_group;
-	struct bt_notification *current_notification;
-	struct bt_notification_iterator *input_iterator;
-	FILE *err;
+	/* Map between a stream and enum debug_info_stream_state. */
+	GHashTable *stream_states;
 };
 
 struct debug_info_source {
@@ -92,5 +115,9 @@ struct debug_info_source *debug_info_query(struct debug_info *debug_info,
 BT_HIDDEN
 void debug_info_handle_event(FILE *err, struct bt_ctf_event *event,
 		struct debug_info *debug_info);
+
+BT_HIDDEN
+void debug_info_close_trace(struct debug_info_iterator *debug_it,
+		struct debug_info_trace *di_trace);
 
 #endif /* BABELTRACE_PLUGIN_DEBUG_INFO_H */
